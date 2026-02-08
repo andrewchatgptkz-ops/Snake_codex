@@ -8,9 +8,9 @@ const GRID = {
 };
 
 const DIFFICULTIES = {
-  easy:   { baseSpeed: 5,  maxSpeed: 12, accelEvery: 5, bonusThreshold: 3, bonusMoveEvery: 4, bonusLifetime: 7 },
-  medium: { baseSpeed: 7,  maxSpeed: 16, accelEvery: 4, bonusThreshold: 5, bonusMoveEvery: 3, bonusLifetime: 5 },
-  hard:   { baseSpeed: 10, maxSpeed: 20, accelEvery: 3, bonusThreshold: 7, bonusMoveEvery: 2, bonusLifetime: 4 },
+  easy:   { baseSpeed: 5,  maxSpeed: 12, accelEvery: 5, bonusThreshold: 3, bonusMoveEvery: 4, bonusLifetime: 7, wallThreshold: 10, wallInterval: [18, 25], wallWarning: 2000 },
+  medium: { baseSpeed: 7,  maxSpeed: 16, accelEvery: 4, bonusThreshold: 5, bonusMoveEvery: 3, bonusLifetime: 5, wallThreshold: 7,  wallInterval: [12, 18], wallWarning: 1500 },
+  hard:   { baseSpeed: 10, maxSpeed: 20, accelEvery: 3, bonusThreshold: 7, bonusMoveEvery: 2, bonusLifetime: 4, wallThreshold: 5,  wallInterval: [8, 14],  wallWarning: 1000 },
 };
 let difficulty = 'medium';
 let diff = DIFFICULTIES.medium;
@@ -80,6 +80,16 @@ let bonus = null;
 let bonusSpawnTimer = 0;
 let bonusMesh = null;
 
+// ── Walls state ──
+let walls = [];
+let wallSpawnTimer = 0;
+let shakeIntensity = 0;
+let shakeTime = 0;
+let wallGroup;
+let warningGroup;
+let wallGeometry;
+let warningGeometry;
+
 const MATERIALS = {
   board: new THREE.MeshStandardMaterial({
     color: '#f2e9d8',
@@ -116,6 +126,16 @@ const MATERIALS = {
     roughness: 0.4,
     metalness: 0.2,
     transparent: true,
+  }),
+  wall: new THREE.MeshStandardMaterial({
+    color: '#8a7e72',
+    roughness: 0.85,
+    metalness: 0.05,
+  }),
+  warning: new THREE.MeshBasicMaterial({
+    color: '#000000',
+    transparent: true,
+    opacity: 0.25,
   }),
 };
 
@@ -168,10 +188,14 @@ const playEat = () => playTone(690, 0.12, 'square');
 const playTurn = () => playTone(320, 0.05, 'sine');
 const playOver = () => playTone(180, 0.4, 'sawtooth');
 const playBonus = () => playTone(520, 0.25, 'sine');
+const playWallLand = () => playTone(80, 0.35, 'sawtooth');
 
 // ── Game logic ──
 const clampRandomFood = () => {
   const occupied = new Set(snake.map((segment) => `${segment.x},${segment.y}`));
+  for (const w of walls) {
+    for (const c of w.cells) occupied.add(`${c.x},${c.y}`);
+  }
   while (true) {
     const x = Math.floor(Math.random() * GRID.cols);
     const y = Math.floor(Math.random() * GRID.rows);
@@ -217,6 +241,15 @@ const resetGame = () => {
   gameOver = false;
   bonus = null;
   bonusSpawnTimer = Math.round(diff.baseSpeed * (8 + Math.random() * 7));
+  // Clear walls
+  for (const w of walls) {
+    w.meshes.forEach((m) => wallGroup?.remove(m));
+    w.warningMeshes.forEach((m) => warningGroup?.remove(m));
+  }
+  walls = [];
+  wallSpawnTimer = 0;
+  shakeIntensity = 0;
+  if (camera) camera.position.set(0, 14, 22);
   updateSnakeMeshes();
   updateFoodMesh();
   if (bonusMesh) bonusMesh.visible = false;
@@ -226,7 +259,14 @@ const canMoveTo = (next) => {
   if (next.x < 0 || next.x >= GRID.cols || next.y < 0 || next.y >= GRID.rows) {
     return false;
   }
-  return !snake.some((segment) => segment.x === next.x && segment.y === next.y);
+  if (snake.some((segment) => segment.x === next.x && segment.y === next.y)) {
+    return false;
+  }
+  for (const w of walls) {
+    if (w.state !== 'landed') continue;
+    if (w.cells.some((c) => c.x === next.x && c.y === next.y)) return false;
+  }
+  return true;
 };
 
 const updateGame = () => {
@@ -277,6 +317,15 @@ const updateGame = () => {
   }
 
   updateBonus();
+
+  // Wall spawn
+  wallSpawnTimer--;
+  if (wallSpawnTimer <= 0 && score >= diff.wallThreshold) {
+    spawnWall();
+    const [lo, hi] = diff.wallInterval;
+    wallSpawnTimer = Math.round(speed * (lo + Math.random() * (hi - lo)));
+  }
+
   updateSnakeMeshes();
 };
 
@@ -397,6 +446,13 @@ const setupScene = () => {
   bonusMesh.castShadow = true;
   bonusMesh.visible = false;
   scene.add(bonusMesh);
+
+  wallGroup = new THREE.Group();
+  scene.add(wallGroup);
+  warningGroup = new THREE.Group();
+  scene.add(warningGroup);
+  wallGeometry = new RoundedBoxGeometry(0.95, 0.6, 0.95, 4, 0.1);
+  warningGeometry = new THREE.PlaneGeometry(0.9, 0.9);
 };
 
 const buildRenderer = async () => {
@@ -531,6 +587,9 @@ const spawnBonus = () => {
 
   const occupied = new Set(snake.map((s) => `${s.x},${s.y}`));
   occupied.add(`${food.x},${food.y}`);
+  for (const w of walls) {
+    for (const c of w.cells) occupied.add(`${c.x},${c.y}`);
+  }
 
   const candidates = [];
   for (let x = 0; x < GRID.cols; x++) {
@@ -629,6 +688,77 @@ const updateBonus = () => {
   }
 };
 
+// ── Wall helpers ──
+const spawnWall = () => {
+  if (walls.filter((w) => w.state === 'landed').length >= 5) return;
+
+  const head = snake[0];
+  const dir = DIRECTIONS[direction];
+  const dist = 5 + Math.floor(Math.random() * 4);
+  const cx = head.x + dir.dx * dist;
+  const cy = head.y + dir.dy * dist;
+
+  // Perpendicular to snake direction
+  const px = dir.dy !== 0 ? 1 : 0;
+  const py = dir.dx !== 0 ? 1 : 0;
+
+  const cells = [
+    { x: cx - px, y: cy - py },
+    { x: cx, y: cy },
+    { x: cx + px, y: cy + py },
+  ];
+
+  // Bounds check — keep 2 cells from edge
+  for (const c of cells) {
+    if (c.x < 2 || c.x >= GRID.cols - 2 || c.y < 2 || c.y >= GRID.rows - 2) return;
+  }
+
+  // Overlap check
+  const occupied = new Set(snake.map((s) => `${s.x},${s.y}`));
+  occupied.add(`${food.x},${food.y}`);
+  if (bonus) occupied.add(`${bonus.x},${bonus.y}`);
+  for (const c of cells) {
+    if (occupied.has(`${c.x},${c.y}`)) return;
+  }
+
+  // Proximity to other walls (min 2 cells apart)
+  for (const w of walls) {
+    for (const wc of w.cells) {
+      for (const c of cells) {
+        if (Math.abs(c.x - wc.x) <= 2 && Math.abs(c.y - wc.y) <= 2) return;
+      }
+    }
+  }
+
+  // Create 3D meshes
+  const meshes = cells.map((c) => {
+    const mesh = new THREE.Mesh(wallGeometry, MATERIALS.wall);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.position.set(c.x - GRID.cols / 2 + 0.5, 8, c.y - GRID.rows / 2 + 0.5);
+    mesh.visible = false;
+    wallGroup.add(mesh);
+    return mesh;
+  });
+
+  const warningMeshes = cells.map((c) => {
+    const mesh = new THREE.Mesh(warningGeometry, MATERIALS.warning.clone());
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(c.x - GRID.cols / 2 + 0.5, -0.19, c.y - GRID.rows / 2 + 0.5);
+    warningGroup.add(mesh);
+    return mesh;
+  });
+
+  walls.push({
+    cells,
+    state: 'warning',
+    timer: 0,
+    warningDuration: diff.wallWarning,
+    meshes,
+    warningMeshes,
+  });
+};
+
 const tick = (time) => {
   const dt = time - lastTime;
   lastTime = time;
@@ -658,6 +788,55 @@ const tick = (time) => {
     bonusMesh.material.opacity = opacity;
     bonusMesh.position.y = 0.55 + Math.sin(time * 0.005) * 0.08;
     bonusMesh.rotation.y = time * 0.002;
+  }
+
+  // Wall animations
+  const FALL_DURATION = 300;
+  for (const w of walls) {
+    w.timer += dt;
+
+    if (w.state === 'warning') {
+      const blink = Math.sin(w.timer * 0.008) > 0;
+      w.warningMeshes.forEach((m) => {
+        m.visible = blink;
+        m.material.opacity = 0.15 + 0.15 * Math.sin(w.timer * 0.006);
+      });
+      if (w.timer >= w.warningDuration) {
+        w.state = 'falling';
+        w.timer = 0;
+        w.warningMeshes.forEach((m) => { m.visible = false; });
+        w.meshes.forEach((m) => { m.visible = true; });
+      }
+    }
+
+    if (w.state === 'falling') {
+      const p = Math.min(1, w.timer / FALL_DURATION);
+      const ease = 1 - Math.pow(1 - p, 3);
+      const y = 8 * (1 - ease) + 0.3 * ease;
+      w.meshes.forEach((m) => { m.position.y = y; });
+      if (p >= 1) {
+        w.state = 'landed';
+        w.meshes.forEach((m) => { m.position.y = 0.3; });
+        w.warningMeshes.forEach((m) => warningGroup.remove(m));
+        shakeIntensity = 0.15;
+        shakeTime = 0;
+        playWallLand();
+      }
+    }
+  }
+
+  // Camera shake
+  if (shakeIntensity > 0.001) {
+    const t = shakeTime / 1000;
+    const decay = Math.exp(-t * 8);
+    const oY = shakeIntensity * Math.sin(t * 30) * decay;
+    const oX = shakeIntensity * Math.sin(t * 23) * decay * 0.5;
+    camera.position.set(oX, 14 + oY, 22);
+    shakeTime += dt;
+    if (decay < 0.01) {
+      shakeIntensity = 0;
+      camera.position.set(0, 14, 22);
+    }
   }
 
   renderer.render(scene, camera);
