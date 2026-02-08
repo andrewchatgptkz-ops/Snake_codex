@@ -35,12 +35,29 @@
         </div>
       </div>
 
-      <!-- Start overlay -->
+      <!-- Title menu -->
       <div class="overlay" id="startOverlay">
         <div class="overlay-card">
-          <h1>Paper Cut Snake</h1>
-          <p>3D-змейка из бумаги. Собирай ягоды, избегай стен и себя.<br>Управление: стрелки / WASD, пробел — пауза.</p>
-          <button class="btn primary" id="startBtn">Начать игру</button>
+          <h1>Snake Codex</h1>
+          <div class="menu-list" id="titleMenu">
+            <button class="menu-item" data-difficulty="easy">
+              <span class="menu-arrow">▸</span>
+              <span>Легко</span>
+              <span class="menu-desc">Спокойный темп</span>
+            </button>
+            <button class="menu-item active" data-difficulty="medium">
+              <span class="menu-arrow">▸</span>
+              <span>Средне</span>
+              <span class="menu-desc">Стандартная игра</span>
+            </button>
+            <button class="menu-item" data-difficulty="hard">
+              <span class="menu-arrow">▸</span>
+              <span>Сложно</span>
+              <span class="menu-desc">Для опытных</span>
+            </button>
+          </div>
+          <p class="rules">Собирай ягоды, избегай стен и своего хвоста.<br>Бирюзовый кристалл замедляет змейку.<br>Управление: стрелки / WASD, пробел — пауза.</p>
+          <p class="menu-hint">↑↓ выбор · Enter старт</p>
         </div>
       </div>
 
@@ -49,7 +66,17 @@
         <div class="overlay-card">
           <h2>Игра окончена</h2>
           <p class="final-score">Счёт: <span id="finalScore">0</span></p>
-          <button class="btn primary" id="restartBtn">Играть снова</button>
+          <div class="menu-list" id="gameOverMenu">
+            <button class="menu-item active" data-action="restart">
+              <span class="menu-arrow">▸</span>
+              <span>Новая игра</span>
+            </button>
+            <button class="menu-item" data-action="mainmenu">
+              <span class="menu-arrow">▸</span>
+              <span>Главное меню</span>
+            </button>
+          </div>
+          <p class="menu-hint">↑↓ выбор · Enter</p>
         </div>
       </div>
 
@@ -57,7 +84,17 @@
       <div class="overlay hidden" id="pauseOverlay">
         <div class="overlay-card">
           <h2>Пауза</h2>
-          <button class="btn primary" id="resumeBtn">Продолжить</button>
+          <div class="menu-list" id="pauseMenu">
+            <button class="menu-item active" data-action="resume">
+              <span class="menu-arrow">▸</span>
+              <span>Продолжить</span>
+            </button>
+            <button class="menu-item" data-action="mainmenu">
+              <span class="menu-arrow">▸</span>
+              <span>Главное меню</span>
+            </button>
+          </div>
+          <p class="menu-hint">↑↓ · Enter · Пробел</p>
         </div>
       </div>
 

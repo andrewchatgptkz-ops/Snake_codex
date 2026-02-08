@@ -291,6 +291,74 @@ body {
   }
 }
 
+/* ── Menu list ── */
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 1.2rem 0;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  font-family: inherit;
+}
+
+.menu-item .menu-arrow {
+  opacity: 0;
+  color: #d47c5f;
+  font-size: 1rem;
+  transition: opacity 0.2s ease;
+  width: 0.8rem;
+}
+
+.menu-item.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #fffaf4;
+}
+
+.menu-item.active .menu-arrow {
+  opacity: 1;
+}
+
+.menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.menu-desc {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.35);
+  margin-left: auto;
+}
+
+.rules {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.5;
+  margin-bottom: 0.8rem;
+}
+
+.menu-hint {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
 @media (max-width: 640px) {
   .hud {
     padding: 0.5rem 0.8rem;

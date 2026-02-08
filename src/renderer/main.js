@@ -7,8 +7,13 @@ const GRID = {
   cell: 1,
 };
 
-const BASE_SPEED = 7;
-const MAX_SPEED = 16;
+const DIFFICULTIES = {
+  easy:   { baseSpeed: 5,  maxSpeed: 12, accelEvery: 5, bonusThreshold: 3, bonusMoveEvery: 4, bonusLifetime: 7 },
+  medium: { baseSpeed: 7,  maxSpeed: 16, accelEvery: 4, bonusThreshold: 5, bonusMoveEvery: 3, bonusLifetime: 5 },
+  hard:   { baseSpeed: 10, maxSpeed: 20, accelEvery: 3, bonusThreshold: 7, bonusMoveEvery: 2, bonusLifetime: 4 },
+};
+let difficulty = 'medium';
+let diff = DIFFICULTIES.medium;
 
 const DIRECTIONS = {
   up: { dx: 0, dy: -1, opposite: 'down' },
@@ -29,9 +34,9 @@ const gameOverOverlay = document.getElementById('gameOverOverlay');
 const pauseOverlay = document.getElementById('pauseOverlay');
 const settingsPanel = document.getElementById('settingsPanel');
 
-const startBtn = document.getElementById('startBtn');
-const restartBtn = document.getElementById('restartBtn');
-const resumeBtn = document.getElementById('resumeBtn');
+const titleMenu = document.getElementById('titleMenu');
+const gameOverMenu = document.getElementById('gameOverMenu');
+const pauseMenu = document.getElementById('pauseMenu');
 const soundBtn = document.getElementById('soundBtn');
 const settingsBtn = document.getElementById('settingsBtn');
 const rendererSelect = document.getElementById('rendererSelect');
@@ -48,12 +53,14 @@ let paused = false;
 let gameOver = false;
 let score = 0;
 let best = 0;
-let speed = BASE_SPEED;
+let speed = DIFFICULTIES.medium.baseSpeed;
 let lastTime = 0;
 let accumulator = 0;
 let rafId = null;
 let quality = 'high';
 let rendererMode = 'webgl';
+let activeMenu = 'title';
+let menuFocus = 1;
 
 let audioCtx = null;
 let masterGain = null;
@@ -67,6 +74,11 @@ let snakeGroup;
 let foodMesh;
 let shadowPlane;
 let resizeObserver;
+
+// ── Bonus (moving target) state ──
+let bonus = null;
+let bonusSpawnTimer = 0;
+let bonusMesh = null;
 
 const MATERIALS = {
   board: new THREE.MeshStandardMaterial({
@@ -98,6 +110,12 @@ const MATERIALS = {
     color: '#7d9b58',
     roughness: 0.6,
     metalness: 0.1,
+  }),
+  bonus: new THREE.MeshStandardMaterial({
+    color: '#4fc3c9',
+    roughness: 0.4,
+    metalness: 0.2,
+    transparent: true,
   }),
 };
 
@@ -149,6 +167,7 @@ const playStart = () => playTone(440, 0.18, 'triangle');
 const playEat = () => playTone(690, 0.12, 'square');
 const playTurn = () => playTone(320, 0.05, 'sine');
 const playOver = () => playTone(180, 0.4, 'sawtooth');
+const playBonus = () => playTone(520, 0.25, 'sine');
 
 // ── Game logic ──
 const clampRandomFood = () => {
@@ -192,12 +211,15 @@ const resetGame = () => {
   direction = 'right';
   nextDirection = 'right';
   food = clampRandomFood();
-  updateSpeed(BASE_SPEED);
+  updateSpeed(diff.baseSpeed);
   accumulator = 0;
   updateScore(0);
   gameOver = false;
+  bonus = null;
+  bonusSpawnTimer = Math.round(diff.baseSpeed * (8 + Math.random() * 7));
   updateSnakeMeshes();
   updateFoodMesh();
+  if (bonusMesh) bonusMesh.visible = false;
 };
 
 const canMoveTo = (next) => {
@@ -219,7 +241,10 @@ const updateGame = () => {
     running = false;
     gameOver = true;
     finalScore.textContent = String(score);
+    activeMenu = 'gameover';
+    menuFocus = 0;
     showOverlay(gameOverOverlay);
+    updateMenuFocus();
     playOver();
     return;
   }
@@ -232,8 +257,8 @@ const updateGame = () => {
     if (newScore > best) {
       setBest(newScore);
     }
-    if (newScore % 4 === 0) {
-      updateSpeed(Math.min(MAX_SPEED, speed + 1));
+    if (newScore % diff.accelEvery === 0) {
+      updateSpeed(Math.min(diff.maxSpeed, speed + 1));
     }
     food = clampRandomFood();
     updateFoodMesh();
@@ -242,6 +267,16 @@ const updateGame = () => {
     snake.pop();
   }
 
+  // Bonus collision
+  if (bonus && nextHead.x === bonus.x && nextHead.y === bonus.y) {
+    updateSpeed(Math.max(diff.baseSpeed, speed - 2));
+    bonus = null;
+    bonusSpawnTimer = Math.round(speed * (8 + Math.random() * 7));
+    if (bonusMesh) bonusMesh.visible = false;
+    playBonus();
+  }
+
+  updateBonus();
   updateSnakeMeshes();
 };
 
@@ -356,6 +391,12 @@ const setupScene = () => {
   foodMesh.add(leafMesh);
 
   scene.add(foodMesh);
+
+  const bonusGeometry = new THREE.IcosahedronGeometry(0.4, 0);
+  bonusMesh = new THREE.Mesh(bonusGeometry, MATERIALS.bonus);
+  bonusMesh.castShadow = true;
+  bonusMesh.visible = false;
+  scene.add(bonusMesh);
 };
 
 const buildRenderer = async () => {
@@ -389,9 +430,6 @@ const buildRenderer = async () => {
   handleResize();
 };
 
-const BASE_FOV = 40;
-const BOARD_ASPECT = GRID.cols / GRID.rows; // 28/18 ≈ 1.56
-
 const handleResize = () => {
   if (!renderer || !camera) return;
   const width = canvas.clientWidth;
@@ -401,13 +439,35 @@ const handleResize = () => {
   const aspect = width / height;
   camera.aspect = aspect;
 
-  // When screen is wider than the board ratio, the board's depth
-  // (near edge) gets clipped — increase vertical FOV to compensate
-  if (aspect > BOARD_ASPECT) {
-    camera.fov = BASE_FOV * (aspect / BOARD_ASPECT);
-  } else {
-    camera.fov = BASE_FOV;
+  // Compute minimum vertical FOV so all 4 board corners fit in view
+  camera.updateMatrixWorld(true);
+  const viewMatrix = camera.matrixWorldInverse;
+
+  const pad = 0.8;
+  const hw = GRID.cols / 2 + pad;
+  const hd = GRID.rows / 2 + pad;
+
+  const corners = [
+    new THREE.Vector3(-hw, 0, -hd),
+    new THREE.Vector3( hw, 0, -hd),
+    new THREE.Vector3(-hw, 0,  hd),
+    new THREE.Vector3( hw, 0,  hd),
+  ];
+
+  let maxVertTan = 0;
+  let maxHorizTan = 0;
+
+  for (const c of corners) {
+    const v = c.clone().applyMatrix4(viewMatrix);
+    const depth = -v.z;
+    if (depth <= 0) continue;
+    maxVertTan  = Math.max(maxVertTan,  Math.abs(v.y) / depth);
+    maxHorizTan = Math.max(maxHorizTan, Math.abs(v.x) / depth);
   }
+
+  const fovVert  = 2 * Math.atan(maxVertTan);
+  const fovHoriz = 2 * Math.atan(maxHorizTan / aspect);
+  camera.fov = THREE.MathUtils.radToDeg(Math.max(fovVert, fovHoriz)) * 1.05;
 
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
@@ -447,6 +507,128 @@ const updateFoodMesh = () => {
   );
 };
 
+// ── Bonus helpers ──
+const updateBonusMesh = () => {
+  if (!bonusMesh) return;
+  if (!bonus) {
+    bonusMesh.visible = false;
+    return;
+  }
+  bonusMesh.visible = true;
+  bonusMesh.position.set(
+    bonus.x - GRID.cols / 2 + 0.5,
+    0.55,
+    bonus.y - GRID.rows / 2 + 0.5
+  );
+};
+
+const spawnBonus = () => {
+  const head = snake[0];
+  const lifetime = diff.bonusLifetime;
+  const maxTicks = Math.round(speed * lifetime);
+  const minDist = 4;
+  const maxDist = Math.max(minDist + 1, Math.floor(speed * lifetime / 3));
+
+  const occupied = new Set(snake.map((s) => `${s.x},${s.y}`));
+  occupied.add(`${food.x},${food.y}`);
+
+  const candidates = [];
+  for (let x = 0; x < GRID.cols; x++) {
+    for (let y = 0; y < GRID.rows; y++) {
+      const dist = Math.abs(x - head.x) + Math.abs(y - head.y);
+      if (dist >= minDist && dist <= maxDist && !occupied.has(`${x},${y}`)) {
+        candidates.push({ x, y });
+      }
+    }
+  }
+
+  if (candidates.length === 0) return;
+
+  const pos = candidates[Math.floor(Math.random() * candidates.length)];
+  const dirs = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+
+  bonus = {
+    x: pos.x,
+    y: pos.y,
+    dx: dir.dx,
+    dy: dir.dy,
+    ticksAlive: 0,
+    maxTicks,
+    moveCounter: 0,
+  };
+
+  updateBonusMesh();
+};
+
+const pickBonusDirection = () => {
+  const dirs = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+  for (let i = dirs.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+  }
+  for (const d of dirs) {
+    const nx = bonus.x + d.dx;
+    const ny = bonus.y + d.dy;
+    if (nx >= 0 && nx < GRID.cols && ny >= 0 && ny < GRID.rows) {
+      if (!snake.some((s) => s.x === nx && s.y === ny)) return d;
+    }
+  }
+  return dirs[0];
+};
+
+const updateBonus = () => {
+  if (!bonus) {
+    bonusSpawnTimer--;
+    if (bonusSpawnTimer <= 0 && score >= diff.bonusThreshold) {
+      spawnBonus();
+    }
+    return;
+  }
+
+  bonus.ticksAlive++;
+
+  if (bonus.ticksAlive >= bonus.maxTicks) {
+    bonus = null;
+    bonusSpawnTimer = Math.round(speed * (8 + Math.random() * 7));
+    updateBonusMesh();
+    return;
+  }
+
+  bonus.moveCounter++;
+  if (bonus.moveCounter >= diff.bonusMoveEvery) {
+    bonus.moveCounter = 0;
+    const nx = bonus.x + bonus.dx;
+    const ny = bonus.y + bonus.dy;
+    const blocked =
+      nx < 0 ||
+      nx >= GRID.cols ||
+      ny < 0 ||
+      ny >= GRID.rows ||
+      snake.some((s) => s.x === nx && s.y === ny);
+
+    if (blocked) {
+      const newDir = pickBonusDirection();
+      bonus.dx = newDir.dx;
+      bonus.dy = newDir.dy;
+    } else {
+      bonus.x = nx;
+      bonus.y = ny;
+    }
+    updateBonusMesh();
+  }
+};
+
 const tick = (time) => {
   const dt = time - lastTime;
   lastTime = time;
@@ -464,6 +646,20 @@ const tick = (time) => {
     foodMesh.position.y = 0.55 + Math.sin(time * 0.004) * 0.05;
   }
 
+  if (bonusMesh && bonus) {
+    const progress = bonus.ticksAlive / bonus.maxTicks;
+    let opacity;
+    if (progress < 0.6) {
+      opacity = 0.7 + 0.3 * Math.sin(time * 0.003);
+    } else {
+      const blinkSpeed = 0.006 + (progress - 0.6) * 0.04;
+      opacity = 0.3 + 0.7 * Math.abs(Math.sin(time * blinkSpeed));
+    }
+    bonusMesh.material.opacity = opacity;
+    bonusMesh.position.y = 0.55 + Math.sin(time * 0.005) * 0.08;
+    bonusMesh.rotation.y = time * 0.002;
+  }
+
   renderer.render(scene, camera);
   rafId = requestAnimationFrame(tick);
 };
@@ -475,13 +671,75 @@ const setDirection = (next) => {
   if (running) playTurn();
 };
 
+// ── Menu navigation ──
+const getActiveMenuEl = () => {
+  if (activeMenu === 'title') return titleMenu;
+  if (activeMenu === 'gameover') return gameOverMenu;
+  if (activeMenu === 'pause') return pauseMenu;
+  return null;
+};
+
+const updateMenuFocus = () => {
+  const el = getActiveMenuEl();
+  if (!el) return;
+  const items = el.querySelectorAll('.menu-item');
+  items.forEach((item, i) => item.classList.toggle('active', i === menuFocus));
+};
+
+const menuNavigate = (delta) => {
+  const el = getActiveMenuEl();
+  if (!el) return;
+  const count = el.querySelectorAll('.menu-item').length;
+  menuFocus = (menuFocus + delta + count) % count;
+  updateMenuFocus();
+};
+
+const goToMainMenu = () => {
+  running = false;
+  paused = false;
+  gameOver = false;
+  activeMenu = 'title';
+  menuFocus = ['easy', 'medium', 'hard'].indexOf(difficulty);
+  if (menuFocus < 0) menuFocus = 1;
+  showOverlay(startOverlay);
+  updateMenuFocus();
+  resetGame();
+};
+
+const menuConfirm = () => {
+  const el = getActiveMenuEl();
+  if (!el) return;
+  const items = el.querySelectorAll('.menu-item');
+  const item = items[menuFocus];
+  if (!item) return;
+
+  if (activeMenu === 'title') {
+    difficulty = item.dataset.difficulty;
+    diff = DIFFICULTIES[difficulty];
+    startGame();
+  } else if (activeMenu === 'gameover') {
+    if (item.dataset.action === 'restart') startGame();
+    else goToMainMenu();
+  } else if (activeMenu === 'pause') {
+    if (item.dataset.action === 'resume') {
+      paused = false;
+      activeMenu = null;
+      hideAllOverlays();
+    } else {
+      goToMainMenu();
+    }
+  }
+};
+
 // ── Start / restart helpers ──
 const startGame = () => {
   ensureAudio();
+  diff = DIFFICULTIES[difficulty];
   resetGame();
   running = true;
   paused = false;
   gameOver = false;
+  activeMenu = null;
   hideAllOverlays();
   playStart();
 };
@@ -490,14 +748,37 @@ const togglePause = () => {
   if (!running) return;
   paused = !paused;
   if (paused) {
+    activeMenu = 'pause';
+    menuFocus = 0;
     showOverlay(pauseOverlay);
+    updateMenuFocus();
   } else {
+    activeMenu = null;
     hideAllOverlays();
   }
 };
 
 // ── Keyboard ──
 const onKeyDown = (event) => {
+  if (activeMenu) {
+    if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
+      event.preventDefault();
+      menuNavigate(-1);
+    } else if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
+      event.preventDefault();
+      menuNavigate(1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      menuConfirm();
+    } else if (event.key === ' ' && activeMenu === 'pause') {
+      event.preventDefault();
+      paused = false;
+      activeMenu = null;
+      hideAllOverlays();
+    }
+    return;
+  }
+
   if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
     setDirection('up');
   } else if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
@@ -522,16 +803,20 @@ const init = async () => {
 
   await buildRenderer();
   resetGame();
+  updateMenuFocus();
   rafId = requestAnimationFrame(tick);
 };
 
 // ── Event listeners ──
-startBtn.addEventListener('click', startGame);
-restartBtn.addEventListener('click', startGame);
-
-resumeBtn.addEventListener('click', () => {
-  paused = false;
-  hideAllOverlays();
+document.querySelectorAll('.menu-item').forEach((item) => {
+  item.addEventListener('click', () => {
+    const el = getActiveMenuEl();
+    if (!el) return;
+    const items = el.querySelectorAll('.menu-item');
+    menuFocus = Array.from(items).indexOf(item);
+    updateMenuFocus();
+    menuConfirm();
+  });
 });
 
 soundBtn.addEventListener('click', () => {
