@@ -1,0 +1,22 @@
+{
+  "name": "snake-codex",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/main/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "build": "vite build",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^31.0.2",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  }
+}

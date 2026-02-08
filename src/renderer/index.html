@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Paper Cut Snake — GPU Edition</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="game-page">
+      <canvas id="gameCanvas"></canvas>
+
+      <!-- HUD bar — always visible -->
+      <div class="hud">
+        <div class="hud-stats">
+          <div class="hud-stat">
+            <span class="hud-label">Счёт</span>
+            <span class="hud-value" id="scoreValue">0</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Лучший</span>
+            <span class="hud-value" id="bestValue">0</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Скорость</span>
+            <span class="hud-value" id="speedValue">7x</span>
+          </div>
+        </div>
+        <div class="hud-actions">
+          <button class="hud-btn" id="soundBtn" aria-label="Звук">🔊</button>
+          <button class="hud-btn" id="settingsBtn" aria-label="Настройки">⚙</button>
+        </div>
+      </div>
+
+      <!-- Start overlay -->
+      <div class="overlay" id="startOverlay">
+        <div class="overlay-card">
+          <h1>Paper Cut Snake</h1>
+          <p>3D-змейка из бумаги. Собирай ягоды, избегай стен и себя.<br>Управление: стрелки / WASD, пробел — пауза.</p>
+          <button class="btn primary" id="startBtn">Начать игру</button>
+        </div>
+      </div>
+
+      <!-- Game Over overlay -->
+      <div class="overlay hidden" id="gameOverOverlay">
+        <div class="overlay-card">
+          <h2>Игра окончена</h2>
+          <p class="final-score">Счёт: <span id="finalScore">0</span></p>
+          <button class="btn primary" id="restartBtn">Играть снова</button>
+        </div>
+      </div>
+
+      <!-- Pause overlay -->
+      <div class="overlay hidden" id="pauseOverlay">
+        <div class="overlay-card">
+          <h2>Пауза</h2>
+          <button class="btn primary" id="resumeBtn">Продолжить</button>
+        </div>
+      </div>
+
+      <!-- Settings panel -->
+      <div class="settings-panel hidden" id="settingsPanel">
+        <div class="settings-title">Настройки</div>
+        <label class="settings-row">
+          <span>Рендер</span>
+          <select id="rendererSelect">
+            <option value="webgl">WebGL</option>
+            <option value="webgpu">WebGPU</option>
+          </select>
+        </label>
+        <label class="settings-row">
+          <span>Качество</span>
+          <button class="btn ghost" id="qualityBtn">Высокое</button>
+        </label>
+      </div>
+
+      <!-- Touch D-pad — hidden on desktop -->
+      <div class="touch-controls" aria-label="Touch controls">
+        <button class="dpad" data-dir="up" aria-label="Вверх">↑</button>
+        <div class="dpad-row">
+          <button class="dpad" data-dir="left" aria-label="Влево">←</button>
+          <button class="dpad" data-dir="right" aria-label="Вправо">→</button>
+        </div>
+        <button class="dpad" data-dir="down" aria-label="Вниз">↓</button>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
